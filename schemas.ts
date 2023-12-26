@@ -136,71 +136,7 @@ export async function getSchemaWithCustomFields(
   
     // Start with the static properties
     let properties: coda.ObjectSchemaProperties = staticSchema.properties;
-  /*
-    // Go get the list of custom fields
-    let allCustomFields = await helpers.callApiBasicCached(
-      context,
-      "custom_field_definitions"
-    );
   
-    // Filter to just the custom fields that apply to this record type
-    let applicableCustomFields = allCustomFields.filter((customField) =>
-      customField.available_on.includes(recordType)
-    );
-  
-    // Format the custom fields as schema properties, and add them to the schema
-    for (let customField of applicableCustomFields) {
-      let name = customField.name;
-      console.log("Field name:", name);
-      let propertySchema;
-      // Build appropriate field schemas based on the type of custom field
-      // Note: we're not currently fully implementing the "Connect" field type,
-      // but could in future given sufficient user demand
-      switch (customField.type) {
-        case "Url":
-          propertySchema = coda.makeSchema({
-            type: coda.ValueType.String,
-            codaType: coda.ValueHintType.Url,
-          });
-          break;
-        case "Date":
-          propertySchema = coda.makeSchema({
-            type: coda.ValueType.Number,
-            codaType: coda.ValueHintType.Date,
-          });
-          break;
-        case "Checkbox":
-          propertySchema = coda.makeSchema({ type: coda.ValueType.Boolean });
-          break;
-        case "Float":
-          propertySchema = coda.makeSchema({ type: coda.ValueType.Number });
-          break;
-        case "Percentage":
-          propertySchema = coda.makeSchema({ type: coda.ValueType.Number });
-          break;
-        case "Currency":
-          propertySchema = coda.makeSchema({
-            type: coda.ValueType.Number,
-            codaType: coda.ValueHintType.Currency,
-          });
-          break;
-        case "MultiSelect":
-          propertySchema = coda.makeSchema({
-            type: coda.ValueType.Array,
-            items: coda.makeSchema({
-              type: coda.ValueType.String,
-            }),
-          });
-          break;
-        default:
-          // including String, Text, Dropdown, Connect
-          propertySchema = coda.makeSchema({ type: coda.ValueType.String });
-      }
-      // Add the custom field property to the schema
-      console.log("Property Schema:", JSON.stringify(propertySchema));
-      properties[name] = propertySchema;
-    }
-  */
     let schema = coda.makeObjectSchema({
       properties: properties,
       displayProperty: staticSchema.displayProperty,

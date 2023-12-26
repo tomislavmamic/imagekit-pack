@@ -1,8 +1,3 @@
-// pack.ts is the main entry point for the pack. All the Coda-ish components are
-// defined in here, such as the pack itself, API authentication, sync tables,
-// and formulas. These then call out to schemas.ts for definitions of the shape
-// of the data the pack will be handling, and formulas.ts for more traditional
-// JavaScript methods for fetching and manipulating data.
 import FormData from "form-data";
 import * as coda from "@codahq/packs-sdk";
 import * as schemas from "./schemas";
@@ -25,17 +20,6 @@ pack.setUserAuthentication({
     usernameOnly: true
   },
 
-  // Determines the display name of the connected account.
-  // getConnectionName: async function(context) {
-  //   const account = await helpers.callApiBasicCached(context, "files");
-  //   return constants.accountIDRegex.exec(account.body[0].url);
-    // let response = await context.fetcher.fetch({
-    //   method: "GET",
-    //   url: constants.BASE_URL,
-    // });
-    // // Return the name of the main account.
-    // return response.body.accounts[0].friendly_name;
-  // },
 });
   
 /* -------------------------------------------------------------------------- */

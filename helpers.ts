@@ -55,18 +55,12 @@ export async function callApiBasicCached(
     context: coda.ExecutionContext,
     endpoint:
       | "files"
-      | "accounts"
-      // | "customer_sources"
-      // | "loss_reasons"
-      // | "contact_types"
-      // | "custom_field_definitions"
+
   ) {
     const response = await callApi(
       context,
       endpoint,
       "GET",
-    //  { page_size: constants.PAGE_SIZE },
-    //  60 * 5 // cache for 5 minutes
     );
     return response.body;
   }
