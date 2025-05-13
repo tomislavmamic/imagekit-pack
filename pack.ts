@@ -14,12 +14,35 @@ pack.addNetworkDomain("imagekit.io");
 // an empty string in email an "Authorization: Basic ..." header.
 // See https://docs.imagekit.io/api-reference/api-introduction/authentication
 pack.setUserAuthentication({
-  type: coda.AuthenticationType.WebBasic,
-  uxConfig: {
-    placeholderUsername: "Private Key",
-    usernameOnly: true
+  type: coda.AuthenticationType.Custom,
+  params: [
+    {
+      name: "privateKey",
+      type: coda.CredentialParamType.SecretText,
+      description: "ImageKit Private API Key (starts with private_)"
+    },
+    {
+      name: "publicKey",
+      type: coda.CredentialParamType.Text,
+      description: "ImageKit Public API Key (starts with public_), optional",
+      optional: true,
+    },
+    {
+      name: "workspaceId",
+      type: coda.CredentialParamType.Text,
+      description: "Workspace ID to target (optional; leave blank if keys belong to the desired workspace).",
+      optional: true,
+    },
+  ],
+  instructions: "Enter the API keys for the ImageKit workspace you'd like this connection to access. The private key is required; the public key and workspace ID are optional.",
+  getConnectionName: async function (context) {
+    const pk = context.connectionParams["publicKey"] as string;
+    if (pk) {
+      return `ImageKit – ${pk.substring(0, 6)}…`;
+    }
+    const priv = context.connectionParams["privateKey"] as string;
+    return `ImageKit – ${priv.substring(0, 6)}…`;
   },
-
 });
   
 /* -------------------------------------------------------------------------- */

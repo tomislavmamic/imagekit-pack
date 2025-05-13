@@ -16,6 +16,18 @@ export async function callApi(
 ) {
   let url = constants.BASE_URL + endpoint;
   let headers = {};
+  // Attach authentication header using custom credentials
+  const privateKey: string | undefined = (context as any).connectionParams?.privateKey;
+  if (privateKey) {
+    const encoded = Buffer.from(`${privateKey}:`).toString("base64");
+    headers["Authorization"] = `Basic ${encoded}`;
+  }
+
+  // If a workspaceId was provided in the connection, forward it as a custom header understood by ImageKit.
+  const workspaceId: string | undefined = (context as any).connectionParams?.workspaceId;
+  if (workspaceId) {
+    headers["x-ik-workspace-id"] = workspaceId;
+  }
   let body;
 
   if (method === "GET") {

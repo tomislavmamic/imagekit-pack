@@ -1,0 +1,881 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+
+Additional Info:
+----------------
+
+================================================================
+Directory Structure
+================================================================
+.coda-pack.json
+.gitignore
+.repomixignore
+constants.ts
+formulas.ts
+helpers.ts
+pack.ts
+package.json
+repomix.config.json
+schemas.ts
+tsconfig.json
+types.ts
+
+================================================================
+Files
+================================================================
+
+================
+File: .coda-pack.json
+================
+{
+  "packId": 26876
+}
+
+================
+File: .gitignore
+================
+.coda.json
+.coda-credentials.json
+node_modules/
+
+================
+File: .repomixignore
+================
+# Add patterns to ignore here, one per line
+# Example:
+# *.log
+# tmp/
+
+================
+File: constants.ts
+================
+export const BASE_URL = "https://api.imagekit.io/v1/";
+export const UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
+export const PAGE_SIZE = 50; // max accepted by the API is 200, but that can crash Pack execution
+
+export const accountIDRegex = new RegExp( "https://ik\.imagekit\.io/([^/]+)/" );
+
+// Regular expression that matches Coda-hosted images.
+export const HostedImageUrlRegex = new RegExp("^https://(?:[^/]*\.)?codahosted.io/.*");
+export const UniqueBoundary = "--------------------------727386185025104152380555";
+
+================
+File: formulas.ts
+================
+import * as coda from "@codahq/packs-sdk";
+import * as types from "./types";
+import * as helpers from "./helpers";
+import * as schemas from "./schemas";
+import * as constants from "./constants";
+
+/* -------------------------------------------------------------------------- */
+/*                            Sync Table Functions                            */
+/* -------------------------------------------------------------------------- */
+
+export async function syncFiles(context: coda.SyncExecutionContext) {
+    const response = await helpers.callApi(context, "files", "GET", 
+      {
+        //type: "file",
+        sort: "ASC_CREATED"
+        //https://docs.imagekit.io/api-reference/media-api/list-and-search-files
+      }
+    );
+  
+    // Process the results
+    let files: types.FileApiResponse[] = response.body;
+  
+    return {result: files};
+  
+  }
+
+================
+File: helpers.ts
+================
+import * as coda from "@codahq/packs-sdk";
+import * as constants from "./constants";
+import * as schemas from "./schemas";
+import type * as types from "./types";
+
+/* -------------------------------------------------------------------------- */
+/*                              Helper Functions                              */
+/* -------------------------------------------------------------------------- */
+export async function callApi(
+  context: coda.ExecutionContext,
+  endpoint: string,
+  method: "GET" | "POST" | "PUT" = "POST",
+  payload?: { [key: string]: any } | string,
+  cacheTtlSecs: number = 60,
+  contentType?: string // New parameter for content type
+) {
+  let url = constants.BASE_URL + endpoint;
+  let headers = {};
+  let body;
+
+  if (method === "GET") {
+    // Ensure that payload is an object for GET requests
+    if (typeof payload === 'object' && payload !== null) {
+      url = coda.withQueryParams(url, payload);
+    }
+  } else {
+    if (contentType === "multipart/form-data") {
+      // For multipart/form-data, payload is already formatted by createMultipartFormData
+      headers["Content-Type"] = contentType;
+      body = payload;
+    } else {
+      // Default to JSON
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(payload);
+    }
+  }
+
+  const response = await context.fetcher.fetch({
+    method: method,
+    url: url,
+    headers: headers,
+    body: method !== "GET" ? body : undefined, // Only include body for POST or PUT
+    cacheTtlSecs: cacheTtlSecs,
+  });
+
+  return response;
+}
+
+  /**
+ * Gets basic, long-lived account configuration info such as pipelines, customer sources,
+ * loss reasons, etc.
+ * @returns usually an array of objects, sometimes just an object (e.g. account)
+ */
+export async function callApiBasicCached(
+    context: coda.ExecutionContext,
+    endpoint:
+      | "files"
+
+  ) {
+    const response = await callApi(
+      context,
+      endpoint,
+      "GET",
+    );
+    return response.body;
+  }
+
+
+  /**
+ * Takes an api response, and prunes it down to just the fields that are defined
+ * in the schema for the sync table. We're mimicking what's done automatically with
+ * schemas (but we need to do this manually e.g. when returning a dynamic-schema'd
+ * object from an action formula)
+ * @param record A record (e.g. an api resonse) object that has extraneous properties
+ * @param schema A coda schema object defining the properties that should be kept
+ * @param additionalKeys Any additional dynamic keys that should be kept
+ * @returns A pruned version of the record
+ */
+export function pruneObjectToSchema(
+    record: Record<string, any>,
+    schema,
+    additionalKeys?: string[]
+  ): types.ApiResponse {
+    let props: coda.ObjectSchemaProperties = schema.properties;
+    let keys = Object.entries(props).map(([key, prop]) => {
+      return prop.fromKey || key;
+    });
+    if (additionalKeys) {
+      keys = keys.concat(additionalKeys);
+    }
+    return Object.entries(record).reduce((result, [key, value]) => {
+      if (keys.includes(key)) {
+        result[key] = value;
+      }
+      return result;
+    }, {});
+  }
+  
+// Helper function to create multipart/form-data payload
+export function createMultipartFormData(args, boundary) {
+  let requestData = '';
+
+  args.forEach(arg => {
+      requestData += `--${boundary}\r\n`;
+      requestData += `Content-Disposition: form-data; name="${arg.key}"\r\n\r\n`;
+      requestData += `${arg.value}\r\n`;
+  });
+
+  requestData += `--${boundary}--\r\n`;
+  return requestData;
+}
+
+export async function uploadImage(args, context) {
+  const boundary = constants.UniqueBoundary;
+  const requestData = createMultipartFormData(args, boundary);
+  const contentType = `multipart/form-data; boundary=${boundary}`;
+
+  // Use callApi for the POST request
+  let response = await callApi(
+    context,
+    '/upload', // Replace with the actual endpoint for uploading images
+    "POST",
+    requestData,
+    60,
+    contentType
+  );
+
+  return response.body.name;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/*                           API Response Formatters                          */
+/* -------------------------------------------------------------------------- */
+
+================
+File: pack.ts
+================
+import FormData from "form-data";
+import * as coda from "@codahq/packs-sdk";
+import * as schemas from "./schemas";
+import * as formulas from "./formulas";
+import * as helpers from "./helpers";
+import * as constants from "./constants";
+import * as types from "./types";
+
+export const pack = coda.newPack();
+
+pack.addNetworkDomain("imagekit.io");
+
+// Per-user authentication to the Imagekit API, using a Private Key in username and 
+// an empty string in email an "Authorization: Basic ..." header.
+// See https://docs.imagekit.io/api-reference/api-introduction/authentication
+pack.setUserAuthentication({
+  type: coda.AuthenticationType.WebBasic,
+  uxConfig: {
+    placeholderUsername: "Private Key",
+    usernameOnly: true
+  },
+
+});
+  
+/* -------------------------------------------------------------------------- */
+/*                                 Sync Tables                                */
+/* -------------------------------------------------------------------------- */
+
+pack.addSyncTable({
+  name: "Files",
+  identityName: "File",
+  schema: schemas.FileSchema,
+  dynamicOptions: {
+    getSchema: async function (context) {
+      return schemas.getSchemaWithCustomFields(context, "files");
+    },
+  },
+  formula: {
+    name: "SyncImages",
+    description: "Sync images from Imagekit",
+    cacheTtlSecs: 0, // don't cache results
+    parameters:  [], // we always want to syunc all files
+    execute: async function ([], context) {
+      return formulas.syncFiles(context);
+    },
+  },
+});
+
+/* -------------------------------------------------------------------------- */
+/*                                  Formulas                                  */
+/* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/*                                   Actions                                  */
+/* -------------------------------------------------------------------------- */
+
+/* ------------------------------     Files     ----------------------------- */
+
+pack.addFormula({
+  name: "UploadImage",
+  description: "Upload the image.",
+  parameters: [
+    coda.makeParameter({
+      type: coda.ParameterType.Image,
+      name: "image",
+      description: "Image to upload.",
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "fileName",
+      description:
+        "The filename to upload to. Default: the original filename of the file.",
+      optional: false,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "useUniqueFileName",
+      description:
+        "Whether to use a unique filename for this file or not. Accepts true or false. If set true, ImageKit.io will add a unique suffix to the filename parameter to get a unique filename. If set false, then the image is uploaded with the provided filename parameter, and any existing file with the same name is replaced. Default value - true",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "tags",
+      description:
+        "Comma-separated value of tags in the format tag1,tag2,tag3. For example - t-shirt,round-neck,men",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "folder",
+      description:
+        "he folder path (e.g. /images/folder/) in which the image has to be uploaded. If the folder(s) didn't exist before, a new folder(s) is created. The nesting of folders can be at most 50 levels deep. The folder name can contain: - Alphanumeric Characters: a-z , A-Z , 0-9 (including unicode letters, marks, and numerals in other languages) - Special Characters: / _ and - - Using multiple / creates a nested folder. Default value - /",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "isPrivateFile",
+      description:
+        "Whether to mark the file as private or not. This is only relevant for image type files.- Accepts true or false. - If set true, the file is marked as private which restricts access to the original image URL and unnamed image transformations without signed URLs. Without the signed URL, only named transformations work on private images. Default value - false",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "isPublished",
+      description:
+        "Whether to upload file as published or not. Default value - true",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "customCoordinates",
+      description:
+        "Define an important area in the image. This is only relevant for image type files. To be passed as a string with the x and y coordinates of the top-left corner, and width and height of the area of interest in the format x,y,width,height. For example - 10,10,100,100 Can be used with fo-customtransformation. If this field is not specified and the file is overwritten, then customCoordinates will be removed.",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "responseFields",
+      description:
+        "Comma-separated values of the fields that you want the API to return in the response. For example, set the value of this field to tags,customCoordinates,isPrivateFile to get the value of tags, customCoordinates, isPublished and isPrivateFile in the response. Accepts combination of tags, customCoordinates, isPrivateFile, embeddedMetadata, customMetadata, and metadata.",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "extensions",
+      description:
+        "Stringified JSON object with an array of extensions to be applied to the image. For reference about extensions read here. https://docs.imagekit.io/extensions/overview",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "webhookUrl",
+      description:
+        "The final status of pending extensions will be sent to this URL. To learn more about how ImageKit uses webhooks, refer here. https://docs.imagekit.io/extensions/overview#webhooks",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "overwriteFile",
+      description:
+        "Default is true. If overwriteFile is set to false and useUniqueFileName is also false, and a file already exists at the exact location, upload API will return an error immediately.",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "overwriteAITags",
+      description:
+        "Default is true. If set to true and a file already exists at the exact location, its AITags will be removed. Set overwriteAITags to false to preserve AITags",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "overwriteTags",
+      description:
+        "Default is true. If the request does not have tags , overwriteTags is set to true and a file already exists at the exact location, exiting tags will be removed. In case the request body has tags, setting overwriteTags to false has no effect and request's tags are set on the asset.",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.Boolean,
+      name: "overwriteCustomMetadata",
+      description:
+        "Default is true. If the request does not have customMetadata , overwriteCustomMetadata is set to true and a file already exists at the exact location, exiting customMetadata will be removed. In case the request body has customMetadata, setting overwriteCustomMetadata to false has no effect and request's customMetadata is set on the asset.",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "customMetadata",
+      description:
+        "Stringified JSON key-value data to be associated with the asset. Checkout overwriteCustomMetadata parameter to understand default behaviour. Before setting any custom metadata on an asset you have to create the field using custom metadata fields API.",
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: "transformation",
+      description:
+        "Stringified JSON object with the properties: pre - Accepts a 'string' containing a valid transformation. Used for requesting a pre-transformation for an image or a video file. post - Accepts an array of objects with the following properties: type: Either transformation, gif-to-video, thumbnail or abs value: A 'string' corresponding to the required transformation. Required if type is transformation or abs. Optional if type is gif-to-video or thumbnail. protocol: Either hls or dash. Only applicable if type is abs. Read more about Adaptive bitrate streaming (ABS). Used for requesting post-transformations for an image or a video file.",
+      optional: true,
+    }),
+  ],
+  resultType: coda.ValueType.String, 
+  codaType: coda.ValueHintType.Url,
+  isAction: true,
+  execute: async function (args, context) {
+  // Define the file attributes in the formula
+    let [image, fileName, useUniqueFileName, tags, folder, isPrivateFile, isPublished, customCoordinates, responseFields, extensions, webhookUrl, overwriteFile, overwriteAITags, overwriteTags, overwriteCustomMetadata, customMetadata, transformation ] = args;
+    // Upload the image
+    let url = await helpers.uploadImage(args, context);
+    // Return the URL of the uploaded image.
+    return url;
+  },
+});
+
+
+
+// Define the formula
+pack.addFormula({
+  name: 'UpdateFileDetails',
+  description: 'Updates details of a file in ImageKit',
+
+  // Define the parameters the formula will accept
+  parameters: [
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: 'fileId',
+      description: 'The unique ID of the file to update',
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.StringArray,
+      name: 'tags',
+      description: 'Tags associated with the file',
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: 'customCoordinates',
+      description: 'Custom coordinates of the file',
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: 'customMetadata',
+      description: 'Custom metadata of the file',
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: 'extensions',
+      description: 'Extensions for the file update',
+      optional: true,
+    }),
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      name: 'webhookUrl',
+      description: 'Webhook URL to be called on successful file update',
+      optional: true,
+    }),
+    // Add other parameters as needed
+  ],
+
+  // Define the return type of the formula
+  resultType: coda.ValueType.Object,
+
+  // The function to execute when the formula is used
+  execute: async function ([fileId, tags, customCoordinates, customMetadata, extensions, webhookUrl], context) {
+    const payload = {
+      fileId: fileId,
+      tags: tags,
+      customCoordinates: customCoordinates,
+      customMetadata: customMetadata,
+      extensions: extensions,
+      webhookUrl: webhookUrl,
+      // Include other parameters in the payload as needed
+    };
+
+    // Filter out undefined parameters
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === undefined) {
+        delete payload[key];
+      }
+    });
+
+    const response = await helpers.callApi(
+      context,
+      constants.BASE_URL + `/files/${fileId}/details`,
+      "PUT",
+      payload
+    );
+
+    // Return the response from the API call
+    return response.body;
+  },
+  schema: schemas.FileSchema
+});
+
+================
+File: package.json
+================
+{
+  "name": "imagekit-pack",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "npx patch-package"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@codahq/packs-sdk": "^1.7.1",
+    "form-data": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.9",
+    "@types/chai-as-promised": "^7.1.7",
+    "@types/content-disposition": "^0.5.7",
+    "@types/luxon": "^3.3.1",
+    "@types/mime-types": "^2.1.3",
+    "@types/mocha": "^10.0.3",
+    "@types/node": "^18.18.8",
+    "@types/sinon": "^10.0.20",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/experimental-utils": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "chai": "^4.3.10",
+    "chai-as-promised": "^7.1.1",
+    "eslint": "^8.52.0",
+    "eslint-plugin-ban": "^1.6.0",
+    "eslint-plugin-filenames": "^1.3.2",
+    "eslint-plugin-local": "^1.0.0",
+    "eslint-plugin-prefer-let": "^3.0.1",
+    "eslint-plugin-prettier": "^5.0.1",
+    "json-schema": "^0.4.0",
+    "mocha": "^10.2.0",
+    "prettier": "^3.0.3",
+    "sinon": "^17.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
+  }
+}
+
+================
+File: repomix.config.json
+================
+{
+  "output": {
+    "filePath": "repomix-output.txt",
+    "style": "plain",
+    "parsableStyle": false,
+    "fileSummary": true,
+    "directoryStructure": true,
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "compress": false,
+    "topFilesLength": 5,
+    "showLineNumbers": false,
+    "copyToClipboard": false,
+    "git": {
+      "sortByChanges": true,
+      "sortByChangesMaxCommits": 100
+    }
+  },
+  "include": [],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": []
+  },
+  "security": {
+    "enableSecurityCheck": true
+  },
+  "tokenCount": {
+    "encoding": "o200k_base"
+  }
+}
+
+================
+File: schemas.ts
+================
+import * as coda from "@codahq/packs-sdk";
+import * as helpers from "./helpers";
+
+/* -------------------------------------------------------------------------- */
+/*                            Common object schemas                           */
+/* -------------------------------------------------------------------------- */
+
+const CustomMetadataSchema = coda.makeObjectSchema({ 
+  //https://docs.imagekit.io/api-reference/custom-metadata-fields-api
+  type: coda.ValueType.Object,
+  idProperty: "id",
+  displayProperty: "name",
+  properties: {
+    id: { type: coda.ValueType.String },
+    name: { type: coda.ValueType.String },
+    stoneColor: { type: coda.ValueType.String },
+    stoneShade: { type: coda.ValueType.String },
+    stoneMaterial: { type: coda.ValueType.String },
+    stoneSize: { type: coda.ValueType.Number },
+    ringType: { type: coda.ValueType.String },
+    ringSize: { type: coda.ValueType.Number },
+    imageOrder: { type: coda.ValueType.Number },
+  }});
+
+/* -------------------------------------------------------------------------- */
+/*                             Sync table schemas                             */
+/* -------------------------------------------------------------------------- */
+
+// https://docs.imagekit.io/api-reference/media-api
+export const FileSchema = coda.makeObjectSchema({
+    type: coda.ValueType.Object,
+    idProperty: "fileId",
+    displayProperty: "name",
+    featuredProperties: [
+        "fileId",
+        "name",
+        "tags",
+        "customCoordinates",
+        "thumbnail",
+        "height",
+        "width"
+    ],
+    identity: { name: "File" },
+    includeUnknownProperties: true,
+    properties: {
+        type: { type: coda.ValueType.String },
+        name: { type: coda.ValueType.String },
+        createdAt: { type: coda.ValueType.String },
+        updatedAt: { type: coda.ValueType.String },
+        fileId: { type: coda.ValueType.String, fromKey: "fileId" },
+        tags: { type: coda.ValueType.Array ,
+          items: coda.makeSchema({ type: coda.ValueType.String }),
+        },
+        AITags: { type: coda.ValueType.Array ,
+          items: coda.makeObjectSchema({ 
+            idProperty: "name",
+            displayProperty: "name",
+            properties: {
+              name: {type: coda.ValueType.String },
+              confidence: {type: coda.ValueType.Number },
+              source: {type: coda.ValueType.String }
+            }
+          }),
+        },
+        versionInfo: coda.makeObjectSchema({ 
+          type: coda.ValueType.Object ,
+          idProperty: "id",
+          displayProperty: "name",
+            properties: {
+              id: { type: coda.ValueType.String },
+              name: { type: coda.ValueType.String }
+            }
+        }),
+        embeddedMetadata: { type: coda.ValueType.String },
+        customCoordinates: { type: coda.ValueType.Array ,
+          items: coda.makeSchema({ type: coda.ValueType.Number }),
+        },
+        customMetadata: CustomMetadataSchema,
+        isPrivateFile: { type: coda.ValueType.Boolean },
+        url: { 
+          type: coda.ValueType.String,
+          codaType: coda.ValueHintType.Url, 
+        },
+        thumbnail: { 
+          type: coda.ValueType.String,
+          codaType: coda.ValueHintType.ImageAttachment 
+        },
+        fileType: { type: coda.ValueType.String },
+        filePath: { type: coda.ValueType.String },
+        height: { type: coda.ValueType.Number },
+        width: { type: coda.ValueType.Number },
+        size: { type: coda.ValueType.Number },
+        hasAlpha: { type: coda.ValueType.Boolean },
+        mime: { type: coda.ValueType.String}
+}})
+
+
+export const AccountSchema = coda.makeObjectSchema({
+  type: coda.ValueType.Object,
+  idProperty: "fileId",
+  displayProperty: "name",
+  featuredProperties: [
+      "name",
+      "url",
+  ],
+  identity: { name: "File" },
+  includeUnknownProperties: true,
+  properties: {
+
+  }}
+)
+
+/* -------------------------------------------------------------------------- */
+/*                         Dynamic Sync Table Schemas                         */
+/* -------------------------------------------------------------------------- */
+
+export async function getSchemaWithCustomFields(
+    context: coda.ExecutionContext,
+    recordType: "files" | "accounts"
+  ) {
+    console.log("Getting schema with custom fields for ", recordType);
+    // First, load up the appropriate static schema, which we'll add on to
+    let staticSchema: coda.Schema;
+    switch (recordType) {
+      case "files":
+        staticSchema = FileSchema;
+        break;
+      case "accounts":
+        staticSchema = AccountSchema;
+        break;
+      default:
+        throw new coda.UserVisibleError(
+          "There was an error generating the sync table"
+        );
+    }
+  
+    // Start with the static properties
+    let properties: coda.ObjectSchemaProperties = staticSchema.properties;
+  
+    let schema = coda.makeObjectSchema({
+      properties: properties,
+      displayProperty: staticSchema.displayProperty,
+      idProperty: staticSchema.idProperty,
+      featuredProperties: staticSchema.featuredProperties,
+      identity: staticSchema.identity,
+    });
+  
+    console.log("Returning schema: ", JSON.stringify(schema));
+    // Return an array schema as the result.
+    return coda.makeSchema({
+      type: coda.ValueType.Array,
+      items: schema,
+    });
+  }
+
+================
+File: tsconfig.json
+================
+{
+  "compilerOptions": {
+    "lib": ["es2020"],
+    "esModuleInterop": true
+  }
+}
+
+================
+File: types.ts
+================
+// A custom type that bundles together the image buffer and content type.
+export interface ImageData {
+  buffer: Buffer,
+  contentType: string,
+  fileName: string,
+}
+
+
+/* -------------------------------------------------------------------------- */
+/*                          Imagekit API Object Types                         */
+/* -------------------------------------------------------------------------- */
+
+// Individual properties that appear within API responses
+export interface CustomFieldApiProperty {
+  // The version of custom fields that appear on a record, such as an
+  // opportunity, person, or company.
+  custom_field_definition_id: string;
+  value: string | number | boolean;
+  computed_value?: string | number | boolean;
+}
+
+
+// Complete API responses
+export interface ApiResponse {
+  id?: string;
+  name?: string;
+  [otherOptions: string]: any;
+}
+export interface FileApiResponse extends ApiResponse {
+  file_id?: string;
+  type?: string;
+  created_at?: number;
+  updated_at?: number;
+  tags?: string[];
+  ai_tags?: object[];
+  version_info?: object;
+  embedded_metadata?: object;
+  custom_coordinates?: number[];
+  custom_metadata?: CustomMetadataApiResponse;
+  isPrivateFile?: boolean;
+  url?: string;
+  thumbnail?: string;
+  file_type?: string;
+  file_path?: string;
+  height?: number;
+  width?: number;
+  size?: number;
+  has_alpha?: boolean;
+  mime?: string;
+}
+
+export interface CustomFieldDefinitionApiResponse {
+  id: string;
+  name: string;
+  data_type: "String" | "Tumber" | "Dropdown" | "Date";
+  available_on: string[];
+  options?: {
+    id: string;
+    name: string;
+    rank: number;
+  };
+}
+
+export interface CustomMetadataApiResponse {
+  id: string;
+  name: string;
+  data_type: "String";
+  available_on: string[];
+  options?: {
+    name: string;
+    value: string;
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            Formula Return Types                            */
+/* -------------------------------------------------------------------------- */
+
+
+
+================================================================
+End of Codebase
+================================================================
