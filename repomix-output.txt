@@ -115,7 +115,8 @@ export async function syncFiles(context: coda.SyncExecutionContext) {
     const response = await helpers.callApi(context, "files", "GET", 
       {
         //type: "file",
-        sort: "ASC_CREATED"
+        sort: "ASC_CREATED",
+        includeFileDetails: true
         //https://docs.imagekit.io/api-reference/media-api/list-and-search-files
       }
     );
@@ -148,6 +149,29 @@ export async function callApi(
 ) {
   let url = constants.BASE_URL + endpoint;
   let headers = {};
+
+  // For Custom Authentication, placeholders are used for credentials.
+  // Coda replaces these placeholders with the actual credential values before sending the request.
+  const invocationToken = context.invocationToken;
+  const privateKeyPlaceholder = `{{privateKey-${invocationToken}}}`;
+  const workspaceIdPlaceholder = `{{workspaceId-${invocationToken}}}`;
+
+  // Authentication via Authorization header using the privateKey placeholder
+  // Note: For Custom Auth, Coda automatically handles Basic Auth encoding if you structure the placeholder like a username.
+  // We need to ensure the placeholder itself is correctly formatted or if Coda expects us to add "Basic " and base64 encode the placeholder itself.
+  // The simpler approach is to let Coda inject the raw private key, then we encode it.
+  // However, the docs suggest Coda does the replacement *before* the fetcher sees it.
+  // Let's assume Coda injects the raw private key value directly for the placeholder.
+  const encoded = Buffer.from(`${privateKeyPlaceholder}:`).toString("base64");
+  headers["Authorization"] = `Basic ${encoded}`;
+
+  // If a workspaceId was intended to be used (i.e., user filled it during auth),
+  // it would be available as a placeholder too.
+  // We need to decide if this header should always be added with a placeholder,
+  // or only if the placeholder would resolve to a non-empty value.
+  // For now, let's add it. If the user leaves workspaceId blank, Coda might inject an empty string.
+  headers["x-ik-workspace-id"] = workspaceIdPlaceholder;
+
   let body;
 
   if (method === "GET") {
@@ -284,12 +308,31 @@ pack.addNetworkDomain("imagekit.io");
 // an empty string in email an "Authorization: Basic ..." header.
 // See https://docs.imagekit.io/api-reference/api-introduction/authentication
 pack.setUserAuthentication({
-  type: coda.AuthenticationType.WebBasic,
-  uxConfig: {
-    placeholderUsername: "Private Key",
-    usernameOnly: true
+  type: coda.AuthenticationType.Custom,
+  params: [
+    {
+      name: "privateKey",
+      description: "ImageKit Private API Key (starts with private_)"
+    },
+    {
+      name: "publicKey",
+      description: "ImageKit Public API Key (starts with public_), optional for API calls, user can leave blank",
+    },
+    {
+      name: "workspaceId",
+      description: "Workspace ID to target (optional for API calls, user can leave blank if keys belong to the desired workspace).",
+    },
+  ],
+  getConnectionName: async function (context: coda.ExecutionContext) {
+    const creds = (context as any).credentials;
+    if (creds?.publicKey) {
+      return `ImageKit – PK used`;
+    }
+    if (creds?.privateKey) {
+      return `ImageKit – Credentials Set`;
+    }
+    return "ImageKit Custom Auth";
   },
-
 });
   
 /* -------------------------------------------------------------------------- */
@@ -558,7 +601,7 @@ File: package.json
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@codahq/packs-sdk": "^1.7.1",
+    "@codahq/packs-sdk": "^1.9.5",
     "form-data": "^4.0.0"
   },
   "devDependencies": {
@@ -568,7 +611,7 @@ File: package.json
     "@types/luxon": "^3.3.1",
     "@types/mime-types": "^2.1.3",
     "@types/mocha": "^10.0.3",
-    "@types/node": "^18.18.8",
+    "@types/node": "^18.19.100",
     "@types/sinon": "^10.0.20",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "@typescript-eslint/experimental-utils": "^5.62.0",
@@ -635,22 +678,14 @@ import * as helpers from "./helpers";
 /*                            Common object schemas                           */
 /* -------------------------------------------------------------------------- */
 
-const CustomMetadataSchema = coda.makeObjectSchema({ 
-  //https://docs.imagekit.io/api-reference/custom-metadata-fields-api
+// Making CustomMetadataSchema generic to accept any key-value pairs
+const CustomMetadataSchema = coda.makeObjectSchema({
   type: coda.ValueType.Object,
-  idProperty: "id",
-  displayProperty: "name",
-  properties: {
-    id: { type: coda.ValueType.String },
-    name: { type: coda.ValueType.String },
-    stoneColor: { type: coda.ValueType.String },
-    stoneShade: { type: coda.ValueType.String },
-    stoneMaterial: { type: coda.ValueType.String },
-    stoneSize: { type: coda.ValueType.Number },
-    ringType: { type: coda.ValueType.String },
-    ringSize: { type: coda.ValueType.Number },
-    imageOrder: { type: coda.ValueType.Number },
-  }});
+  // codaType: coda.ValueHintType.Json, // 'Json' is not available
+  properties: {},
+  includeUnknownProperties: true, // Retain properties not explicitly defined
+  // additionalProperties: coda.makeSchema({ type: coda.ValueType.String }), // Remove this fallback
+});
 
 /* -------------------------------------------------------------------------- */
 /*                             Sync table schemas                             */
@@ -788,7 +823,8 @@ File: tsconfig.json
 ================
 {
   "compilerOptions": {
-    "lib": ["es2020"],
+    "lib": ["es2020", "dom"],
+    "types": ["node"],
     "esModuleInterop": true
   }
 }

@@ -14,34 +14,17 @@ pack.addNetworkDomain("imagekit.io");
 // an empty string in email an "Authorization: Basic ..." header.
 // See https://docs.imagekit.io/api-reference/api-introduction/authentication
 pack.setUserAuthentication({
-  type: coda.AuthenticationType.Custom,
-  params: [
-    {
-      name: "privateKey",
-      type: coda.CredentialParamType.SecretText,
-      description: "ImageKit Private API Key (starts with private_)"
-    },
-    {
-      name: "publicKey",
-      type: coda.CredentialParamType.Text,
-      description: "ImageKit Public API Key (starts with public_), optional",
-      optional: true,
-    },
-    {
-      name: "workspaceId",
-      type: coda.CredentialParamType.Text,
-      description: "Workspace ID to target (optional; leave blank if keys belong to the desired workspace).",
-      optional: true,
-    },
-  ],
-  instructions: "Enter the API keys for the ImageKit workspace you'd like this connection to access. The private key is required; the public key and workspace ID are optional.",
-  getConnectionName: async function (context) {
-    const pk = context.connectionParams["publicKey"] as string;
-    if (pk) {
-      return `ImageKit – ${pk.substring(0, 6)}…`;
-    }
-    const priv = context.connectionParams["privateKey"] as string;
-    return `ImageKit – ${priv.substring(0, 6)}…`;
+  type: coda.AuthenticationType.WebBasic,
+  uxConfig: {
+    usernameOnly: true,
+    placeholderUsername: "ImageKit Private API Key (starts with private_)",
+  },
+  getConnectionName: async function (context: coda.ExecutionContext) {
+    // For WebBasic, the username is available in context.invocationContext.authenticatedPrincipal.username
+    // However, we don't have direct access to the raw credential here to check if it's set.
+    // We'll assume if getConnectionName is called, credentials are set.
+    // A more robust check might involve a simple API call if available.
+    return "ImageKit Account";
   },
 });
   
@@ -62,9 +45,14 @@ pack.addSyncTable({
     name: "SyncImages",
     description: "Sync images from Imagekit",
     cacheTtlSecs: 0, // don't cache results
-    parameters:  [], // we always want to syunc all files
-    execute: async function ([], context) {
-      return formulas.syncFiles(context);
+    parameters:  [], // No parameters needed as API key scopes to the account
+    execute: async function ([], context) { // No parameters to destructure
+      // Parameters for the API call, workspaceId is no longer needed here
+      const params = {
+        sort: "ASC_CREATED",
+        includeFileDetails: true,
+      };
+      return formulas.syncFiles(context, params); // Pass necessary params to syncFiles
     },
   },
 });
@@ -205,10 +193,32 @@ pack.addFormula({
   codaType: coda.ValueHintType.Url,
   isAction: true,
   execute: async function (args, context) {
-  // Define the file attributes in the formula
-    let [image, fileName, useUniqueFileName, tags, folder, isPrivateFile, isPublished, customCoordinates, responseFields, extensions, webhookUrl, overwriteFile, overwriteAITags, overwriteTags, overwriteCustomMetadata, customMetadata, transformation ] = args;
+  // Define the file attributes in the formula, workspaceId removed from destructuring
+    const [image, fileName, useUniqueFileName, tags, folder, isPrivateFile, isPublished, customCoordinates, responseFields, extensions, webhookUrl, overwriteFile, overwriteAITags, overwriteTags, overwriteCustomMetadata, customMetadata, transformation ] = args;
+    
+    // Prepare the arguments for uploadImage, workspaceId removed
+    const uploadArgs = {
+      image, 
+      fileName, 
+      useUniqueFileName, 
+      tags, 
+      folder, 
+      isPrivateFile, 
+      isPublished, 
+      customCoordinates, 
+      responseFields, 
+      extensions, 
+      webhookUrl, 
+      overwriteFile, 
+      overwriteAITags, 
+      overwriteTags, 
+      overwriteCustomMetadata, 
+      customMetadata, 
+      transformation,
+    };
+
     // Upload the image
-    let url = await helpers.uploadImage(args, context);
+    let url = await helpers.uploadImage(uploadArgs, context);
     // Return the URL of the uploaded image.
     return url;
   },
@@ -220,6 +230,7 @@ pack.addFormula({
 pack.addFormula({
   name: 'UpdateFileDetails',
   description: 'Updates details of a file in ImageKit',
+  isAction: true,
 
   // Define the parameters the formula will accept
   parameters: [
@@ -266,14 +277,38 @@ pack.addFormula({
 
   // The function to execute when the formula is used
   execute: async function ([fileId, tags, customCoordinates, customMetadata, extensions, webhookUrl], context) {
-    const payload = {
-      fileId: fileId,
+    // Correct arguments for execute, matching defined parameters
+    let parsedCustomMetadata: object | undefined;
+
+    if (customMetadata === "") { // Explicitly empty string
+      parsedCustomMetadata = {}; // Set to empty object to clear existing metadata
+    } else if (customMetadata && typeof customMetadata === 'string') {
+      if (customMetadata.trim() === '{}') { // String is "{}"
+        parsedCustomMetadata = {}; // Also treat as instruction to clear
+      } else {
+        try {
+          parsedCustomMetadata = JSON.parse(customMetadata);
+          // Iterate over parsedCustomMetadata and change empty strings to null
+          if (parsedCustomMetadata && typeof parsedCustomMetadata === 'object') {
+            for (const key in parsedCustomMetadata) {
+              if (Object.prototype.hasOwnProperty.call(parsedCustomMetadata, key) && parsedCustomMetadata[key] === "") {
+                parsedCustomMetadata[key] = null;
+              }
+            }
+          }
+        } catch (e) {
+          throw new coda.UserVisibleError('Invalid JSON string provided for Custom Metadata: ' + e.message + ". Input was: " + customMetadata);
+        }
+      }
+    }    
+    // If customMetadata was null/undefined from Coda, parsedCustomMetadata remains undefined.
+
+    const payload: { [key: string]: any } = {
       tags: tags,
       customCoordinates: customCoordinates,
-      customMetadata: customMetadata,
+      customMetadata: parsedCustomMetadata,
       extensions: extensions,
       webhookUrl: webhookUrl,
-      // Include other parameters in the payload as needed
     };
 
     // Filter out undefined parameters
@@ -285,8 +320,8 @@ pack.addFormula({
 
     const response = await helpers.callApi(
       context,
-      constants.BASE_URL + `/files/${fileId}/details`,
-      "PUT",
+      `/files/${fileId}/details`,
+      "PATCH",
       payload
     );
 
@@ -294,4 +329,49 @@ pack.addFormula({
     return response.body;
   },
   schema: schemas.FileSchema
+});
+
+// New helper formula to create a custom metadata object from a JSON string
+pack.addFormula({
+  name: "CreateCustomMetadataFromJSON",
+  description: "Parses a JSON string and creates a custom metadata object, omitting keys if their values in the JSON are empty strings or null. Intended for use with the UpdateFileDetails formula.",
+  parameters: [
+    coda.makeParameter({ 
+      type: coda.ParameterType.String, 
+      name: "metadataJsonString", 
+      optional: true, 
+      description: "A JSON string representing the custom metadata. E.g., '{\"shade\": \"White\", \"plating\": \"\", \"notes\": null}'." 
+    }),
+  ],
+  resultType: coda.ValueType.Object,
+  schema: schemas.CustomMetadataSchema, // Use the exported generic object schema
+  execute: async function ([metadataJsonString], context) {
+    const cleanedMetadata: { [key: string]: any } = {};
+
+    if (!metadataJsonString || metadataJsonString.trim() === "" || metadataJsonString.trim() === "{}") {
+      return {}; // Return an empty object if input is blank, empty, or just an empty JSON object string
+    }
+
+    let parsedInput: any;
+    try {
+      parsedInput = JSON.parse(metadataJsonString);
+    } catch (e) {
+      throw new coda.UserVisibleError('Invalid JSON string provided: ' + e.message + ". Input was: " + metadataJsonString);
+    }
+
+    if (parsedInput && typeof parsedInput === 'object' && !Array.isArray(parsedInput)) {
+      for (const key in parsedInput) {
+        if (Object.prototype.hasOwnProperty.call(parsedInput, key)) {
+          const value = parsedInput[key];
+          if (value !== "" && value !== null) { // Only include if value is not an empty string and not null
+            cleanedMetadata[key] = value;
+          }
+        }
+      }
+    } else {
+      throw new coda.UserVisibleError('Input JSON string must resolve to a JSON object. Input was: ' + metadataJsonString);
+    }
+    
+    return cleanedMetadata;
+  },
 });

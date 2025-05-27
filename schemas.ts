@@ -5,22 +5,14 @@ import * as helpers from "./helpers";
 /*                            Common object schemas                           */
 /* -------------------------------------------------------------------------- */
 
-const CustomMetadataSchema = coda.makeObjectSchema({ 
-  //https://docs.imagekit.io/api-reference/custom-metadata-fields-api
+// Making CustomMetadataSchema generic to accept any key-value pairs
+export const CustomMetadataSchema = coda.makeObjectSchema({
   type: coda.ValueType.Object,
-  idProperty: "id",
-  displayProperty: "name",
-  properties: {
-    id: { type: coda.ValueType.String },
-    name: { type: coda.ValueType.String },
-    stoneColor: { type: coda.ValueType.String },
-    stoneShade: { type: coda.ValueType.String },
-    stoneMaterial: { type: coda.ValueType.String },
-    stoneSize: { type: coda.ValueType.Number },
-    ringType: { type: coda.ValueType.String },
-    ringSize: { type: coda.ValueType.Number },
-    imageOrder: { type: coda.ValueType.Number },
-  }});
+  // codaType: coda.ValueHintType.Json, // 'Json' is not available
+  properties: {},
+  includeUnknownProperties: true, // Retain properties not explicitly defined
+  // additionalProperties: coda.makeSchema({ type: coda.ValueType.String }), // Remove this fallback
+});
 
 /* -------------------------------------------------------------------------- */
 /*                             Sync table schemas                             */
@@ -152,3 +144,27 @@ export async function getSchemaWithCustomFields(
       items: schema,
     });
   }
+
+export const BulkUpdateFileDetailsResponseSchema = coda.makeObjectSchema({
+  properties: {
+    successfullyUpdatedFileIds: {
+      type: coda.ValueType.Array,
+      items: coda.makeSchema({ type: coda.ValueType.String }),
+      description: "List of file IDs that were successfully updated.",
+    },
+    partiallyUpdatedFileIds: {
+      type: coda.ValueType.Array,
+      items: coda.makeSchema({ type: coda.ValueType.String }),
+      description: "List of file IDs that were partially updated (if any; ImageKit might not use this often for metadata but good to have).",
+    },
+    failedFileIds: {
+      type: coda.ValueType.Array,
+      items: coda.makeSchema({ type: coda.ValueType.String }),
+      description: "List of file IDs that failed to update.",
+    },
+  },
+  displayProperty: "successfullyUpdatedFileIds",
+  identity: { // Optional, but can be useful if you ever sync these results
+    name: "BulkUpdateStatus"
+  }
+});

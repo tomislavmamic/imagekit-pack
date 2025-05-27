@@ -1,4 +1,4 @@
-export const BASE_URL = "https://api.imagekit.io/v1/";
+export const BASE_URL = "https://api.imagekit.io/v1";
 export const UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
 export const PAGE_SIZE = 50; // max accepted by the API is 200, but that can crash Pack execution
 
